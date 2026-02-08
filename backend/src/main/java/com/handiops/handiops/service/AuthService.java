@@ -1,0 +1,71 @@
+package com.handiops.handiops.service;
+
+import com.handiops.handiops.dto.Auth.RegisterDto;
+import com.handiops.handiops.dto.ResClientDTO;
+import com.handiops.handiops.dto.User.UserResponseDTO;
+import com.handiops.handiops.entity.Client;
+import com.handiops.handiops.entity.Role;
+import com.handiops.handiops.entity.User;
+import com.handiops.handiops.exception.UserAlreadyExistsException;
+import com.handiops.handiops.repository.ClientRepository;
+import com.handiops.handiops.repository.RoleRepository;
+import com.handiops.handiops.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.HashSet;
+import java.util.Set;
+
+@Service
+@RequiredArgsConstructor
+public class AuthService {
+
+    private final UserRepository userRepository;
+    private final ClientRepository clientRepository;
+    private final RoleRepository roleRepository;
+
+    private final PasswordEncoder passwordEncoder;
+
+    @Transactional
+    public ResClientDTO register(RegisterDto dto) {
+        // 1. التحقق من وجود الإيميل محلياً
+        if (userRepository.existsByEmail(dto.getEmail())) {
+            throw new UserAlreadyExistsException("Email already exists");
+        }
+
+        // 2. جلب دور CLIENT
+        Role clientRole = roleRepository.findByName(Role.RoleType.CLIENT)
+                .orElseThrow(() -> new RuntimeException("Default role CLIENT not found. Please initialize roles."));
+
+        Set<Role> roles = new HashSet<>();
+        roles.add(clientRole);
+
+        // 3. إنشاء المستخدم محلياً (Local DB)
+        // ملاحظة: هذا يحفظ المستخدم في Postgres فقط لربطه بالـ Business Logic
+        // يجب عليك أيضاً التأكد من أن المستخدم يتم إنشاؤه في Keycloak
+        User user = User.builder()
+                .email(dto.getEmail())
+                .passwordHash(passwordEncoder.encode(dto.getPasswordHash())) // نحتفظ به مشفراً محلياً
+                .active(true)
+                .roles(roles)
+                .build();
+
+        userRepository.save(user);
+
+        // 4. إنشاء الـ Client المرتبط بالمستخدم
+        Client client = Client.builder()
+                .name(dto.getName())
+                .user(user)
+                .build();
+
+        clientRepository.save(client);
+
+        // 5. إرجاع النتيجة
+        UserResponseDTO userDTO = new UserResponseDTO(user.getEmail(), "[PROTECTED]", user.isActive());
+        return new ResClientDTO(client.getId(), client.getName(), userDTO);
+    }
+
+    // تم حذف login, refreshToken, logout لأن AuthController أصبح يتكلف بها عبر Keycloak API
+}
